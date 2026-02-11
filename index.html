@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Nominatim GPX + 默认地图</title>
+  <title>Nominatim 地图 + 按需下载</title>
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -53,8 +53,9 @@
     }
     .error { color: #d32f2f; }
     .success { color: #2e7d32; }
+    .info { color: #1976d2; }
 
-    /* 地图容器 —— 始终可见 */
+    /* 地图容器 */
     #map {
       height: 400px;
       width: 100%;
@@ -62,19 +63,26 @@
       border-radius: 6px;
       margin-top: 20px;
     }
+
+    /* 下载按钮默认隐藏 */
+    #downloadBtn {
+      display: none;
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
-  <h1>🌍 Nominatim GPX + 实时地图</h1>
+  <h1>🌍 Nominatim 地图 + 按需下载</h1>
   <p>输入地点（如：Eiffel Tower, 北京故宫）：</p>
   
   <div class="input-group">
     <input type="text" id="query" placeholder="Place name..." autocomplete="off" />
-    <button onclick="searchAndMark()">生成 GPX 并定位</button>
   </div>
+
+  <button id="downloadBtn" onclick="downloadGpx()">📥 下载 GPX 文件</button>
   
   <div id="status"></div>
-  <div id="map"></div> <!-- 地图始终在此处 -->
+  <div id="map"></div>
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -85,50 +93,59 @@
 
     let map = null;
     let marker = null;
+    let currentResult = null; // 缓存当前地点数据，用于下载
 
-    // 页面加载时初始化地图（默认显示世界或中国）
+    // 页面加载时初始化地图
     window.addEventListener('load', () => {
       initMap();
+      setupInputListener();
     });
 
     function initMap() {
-      // 默认中心点：可选世界中心 [0, 0] 或中国中心 [35, 105]
-      const defaultCenter = [35, 105]; // 中国大致中心
-      const defaultZoom = 4;
+      const defaultCenter = [35, 105]; // 中国中心
+      map = L.map('map').setView(defaultCenter, 4);
 
-      map = L.map('map').setView(defaultCenter, defaultZoom);
-
-      // 添加 OpenStreetMap 瓦片
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }).addTo(map);
     }
 
-    async function searchAndMark() {
-      const query = document.getElementById('query').value.trim();
+    function setupInputListener() {
+      const input = document.getElementById('query');
+      let debounceTimer;
+
+      input.addEventListener('input', () => {
+        const query = input.value.trim();
+        if (query === '') {
+          hideDownloadButton();
+          clearStatus();
+          return;
+        }
+
+        // 防抖：用户停止输入 500ms 后再搜索
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          geocodeAndShowOnMap(query);
+        }, 500);
+      });
+    }
+
+    async function geocodeAndShowOnMap(query) {
       const status = document.getElementById('status');
-
-      if (!query) {
-        status.className = 'error';
-        status.textContent = '请输入地点名称！';
-        return;
-      }
-
-      status.className = '';
-      status.textContent = '🔍 查询中...';
+      status.className = 'info';
+      status.textContent = '🔍 定位中...';
 
       try {
-        // 调用 Nominatim
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&email=${encodeURIComponent(YOUR_EMAIL)}`;
         const response = await fetch(url);
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          throw new Error(`HTTP ${response.status}`);
         }
 
         const data = await response.json();
         if (!data || data.length === 0) {
-          throw new Error('未找到该地点，请尝试更具体的名称');
+          throw new Error('未找到该地点');
         }
 
         const result = data[0];
@@ -136,19 +153,40 @@
         const lon = parseFloat(result.lon);
         const displayName = result.display_name || query;
 
-        // 移除旧标记
-        if (marker) {
-          map.removeLayer(marker);
-        }
-
-        // 添加新标记并居中
+        // 更新地图
+        if (marker) map.removeLayer(marker);
         marker = L.marker([lat, lon]).addTo(map)
           .bindPopup(`<b>${escapeHtml(displayName)}</b>`).openPopup();
+        map.setView([lat, lon], 14);
 
-        map.setView([lat, lon], 14); // 缩放到 14 级
+        // 缓存结果用于下载
+        currentResult = {
+          query: query,
+          lat: lat,
+          lon: lon,
+          displayName: displayName
+        };
 
-        // 生成 GPX 并下载
-        const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
+        // 显示下载按钮
+        showDownloadButton();
+
+        status.className = 'success';
+        status.textContent = '✅ 已定位到地图';
+      } catch (error) {
+        console.error('Geocoding error:', error);
+        status.className = 'error';
+        status.textContent = `❌ ${error.message}`;
+        hideDownloadButton();
+        currentResult = null;
+      }
+    }
+
+    function downloadGpx() {
+      if (!currentResult) return;
+
+      const { query, lat, lon, displayName } = currentResult;
+
+      const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Nominatim GPX Tool" xmlns="http://www.topografix.com/GPX/1/1"
      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
      xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
@@ -160,20 +198,32 @@
   </wpt>
 </gpx>`;
 
-        const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = sanitizeFilename(query) + '.gpx';
-        link.click();
-        URL.revokeObjectURL(link.href);
+      const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = sanitizeFilename(query) + '.gpx';
+      link.click();
+      URL.revokeObjectURL(link.href);
 
-        status.className = 'success';
-        status.textContent = '✅ GPX 已下载，地图已定位！';
-      } catch (error) {
-        console.error('Error:', error);
-        status.className = 'error';
-        status.textContent = `❌ ${error.message}`;
-      }
+      // 可选：显示下载成功提示
+      const status = document.getElementById('status');
+      status.className = 'success';
+      status.textContent = '✅ GPX 文件已下载！';
+    }
+
+    // UI 控制函数
+    function showDownloadButton() {
+      document.getElementById('downloadBtn').style.display = 'block';
+    }
+
+    function hideDownloadButton() {
+      document.getElementById('downloadBtn').style.display = 'none';
+    }
+
+    function clearStatus() {
+      const status = document.getElementById('status');
+      status.textContent = '';
+      status.className = '';
     }
 
     // 工具函数
@@ -196,11 +246,6 @@
     function sanitizeFilename(name) {
       return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 100).trim();
     }
-
-    // 支持回车提交
-    document.getElementById('query').addEventListener('keypress', (e) => {
-      if ( e.key === 'Enter' ) searchAndMark();
-    });
   </script>
 </body>
 </html>
