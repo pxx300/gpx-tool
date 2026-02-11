@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GPX 地点导出工具</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 20px;
+      background-color: #f9f9f9;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    #status {
+      margin-top: 10px;
+      min-height: 20px;
+      color: #d9534f;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>📍 GPX 地点导出工具</h1>
+  <p>输入地点名称（如：北京南站、Eiffel Tower、Tokyo Station）：</p>
+  <input type="text" id="location" placeholder="例如：Beijing South Railway Station" />
+  <button onclick="generateGpx()">生成并下载 .gpx 文件</button>
+  <div id="status"></div>
+
+  <script>
+    async function generateGpx() {
+      const location = document.getElementById('location').value.trim();
+      const statusDiv = document.getElementById('status');
+      
+      if (!location) {
+        statusDiv.textContent = '请输入地点名称！';
+        return;
+      }
+
+      statusDiv.textContent = '正在查询位置...';
+
+      try {
+        // 使用 OpenStreetMap Nominatim 进行地理编码（免费，无需密钥）
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&limit=1`;
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'GPX-Generator (contact: your-email@example.com)' // Nominatim 要求提供 User-Agent
+          }
+        });
+
+        const data = await response.json();
+
+        if (!data || data.length === 0) {
+          throw new Error('未找到该地点，请尝试更具体的名称。');
+        }
+
+        const result = data[0];
+        const lat = parseFloat(result.lat);
+        const lon = parseFloat(result.lon);
+        const displayName = result.display_name;
+
+        // 生成 GPX 内容
+        const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Web GPX Generator" xmlns="http://www.topografix.com/GPX/1/1"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <wpt lat="${lat}" lon="${lon}">
+    <name>${escapeXml(location)}</name>
+    <desc>${escapeXml(displayName)}</desc>
+    <time>${new Date().toISOString()}</time>
+  </wpt>
+</gpx>`;
+
+        // 下载文件
+        const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${sanitizeFilename(location)}.gpx`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+
+        statusDiv.textContent = '✅ GPX 文件已下载！';
+      } catch (error) {
+        console.error(error);
+        statusDiv.textContent = `❌ 错误：${error.message}`;
+      }
+    }
+
+    // 辅助函数：转义 XML 特殊字符
+    function escapeXml(unsafe) {
+      if (!unsafe) return '';
+      return unsafe
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    }
+
+    // 辅助函数：安全文件名
+    function sanitizeFilename(name) {
+      return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 100);
+    }
+  </script>
+</body>
+</html>
