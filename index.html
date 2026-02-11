@@ -1,31 +1,97 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <title>Nominatim GPX Exporter</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nominatim GPX + 地图</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
   <style>
-    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-    input, button { width: 100%; padding: 12px; margin: 10px 0; box-sizing: border-box; }
-    button { background: #4CAF50; color: white; border: none; cursor: pointer; }
-    #status { margin-top: 15px; min-height: 24px; text-align: center; font-weight: bold; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 0 15px;
+      background: #f9f9f9;
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+      color: #2c5aa0;
+    }
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin: 15px 0;
+    }
+    #query {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+    button {
+      padding: 10px 16px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    #status {
+      text-align: center;
+      min-height: 24px;
+      font-weight: bold;
+      margin: 10px 0;
+    }
     .error { color: #d32f2f; }
     .success { color: #2e7d32; }
+
+    /* 地图容器 */
+    #map {
+      height: 400px;
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-top: 20px;
+      display: none; /* 初始隐藏 */
+    }
   </style>
 </head>
 <body>
-  <h1>🌍 Nominatim GPX 导出工具</h1>
-  <p>输入地点（如：Eiffel Tower, Beijing）：</p>
-  <input type="text" id="query" placeholder="Place name..." />
-  <button onclick="generateGpx()">生成 GPX 文件</button>
+  <h1>🌍 Nominatim GPX + 地图查看器</h1>
+  <p>输入地点（如：Eiffel Tower, 北京故宫）：</p>
+  
+  <div class="input-group">
+    <input type="text" id="query" placeholder="Place name..." autocomplete="off" />
+    <button onclick="generateGpxAndShowMap()">生成 GPX 并显示地图</button>
+  </div>
+  
   <div id="status"></div>
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
-    // ✅ 替换为你自己的邮箱（用于 Nominatim 合规）
-    const YOUR_EMAIL = "CerenPeng@126.com"; // ←←← 改这里！
+    // 🔑 替换为你自己的邮箱（Nominatim 合规要求）
+    const YOUR_EMAIL = "CerenPeng@126.com"; // ←←← 请修改这里！
 
-    async function generateGpx() {
+    let map = null;
+    let marker = null;
+
+    async function generateGpxAndShowMap() {
       const query = document.getElementById('query').value.trim();
       const status = document.getElementById('status');
+      const mapContainer = document.getElementById('map');
+
       if (!query) {
         status.className = 'error';
         status.textContent = '请输入地点名称！';
@@ -36,29 +102,25 @@
       status.textContent = '🔍 查询中...';
 
       try {
-        // ✅ 关键：添加 email 参数，符合 Nominatim 使用政策
+        // 调用 Nominatim
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&email=${encodeURIComponent(YOUR_EMAIL)}`;
-
-        const response = await fetch(url, {
-          // 不需要设置 User-Agent（浏览器会自动带）
-          // 但 email 参数已足够让 Nominatim 接受请求
-        });
+        const response = await fetch(url);
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const data = await response.json();
-
         if (!data || data.length === 0) {
           throw new Error('未找到该地点，请尝试更具体的名称');
         }
 
-        const lat = parseFloat(data[0].lat);
-        const lon = parseFloat(data[0].lon);
-        const displayName = data[0].display_name || query;
+        const result = data[0];
+        const lat = parseFloat(result.lat);
+        const lon = parseFloat(result.lon);
+        const displayName = result.display_name || query;
 
-        // 生成 GPX
+        // 1️⃣ 生成并下载 GPX
         const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Nominatim GPX Tool" xmlns="http://www.topografix.com/GPX/1/1"
      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -71,7 +133,6 @@
   </wpt>
 </gpx>`;
 
-        // 下载文件
         const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -79,8 +140,11 @@
         link.click();
         URL.revokeObjectURL(link.href);
 
+        // 2️⃣ 显示地图
+        showMap(lat, lon, displayName);
+
         status.className = 'success';
-        status.textContent = '✅ GPX 文件已下载！';
+        status.textContent = '✅ GPX 已下载，地图已加载！';
       } catch (error) {
         console.error('Error:', error);
         status.className = 'error';
@@ -88,6 +152,34 @@
       }
     }
 
+    function showMap(lat, lon, name) {
+      const mapContainer = document.getElementById('map');
+      mapContainer.style.display = 'block';
+
+      // 如果地图已存在，先清空
+      if (map) {
+        map.remove();
+      }
+
+      // 创建新地图
+      map = L.map('map').setView([lat, lon], 14);
+
+      // 添加 OpenStreetMap 瓦片
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      // 移除旧标记（如有）
+      if (marker) {
+        map.removeLayer(marker);
+      }
+
+      // 添加新标记
+      marker = L.marker([lat, lon]).addTo(map)
+        .bindPopup(`<b>${escapeHtml(name)}</b>`).openPopup();
+    }
+
+    // 工具函数
     function escapeXml(str) {
       if (!str) return '';
       return str
@@ -98,15 +190,20 @@
         .replace(/'/g, '&apos;');
     }
 
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     function sanitizeFilename(name) {
       return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 100).trim();
     }
 
     // 支持回车提交
     document.getElementById('query').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') generateGpx();
+      if (e.key === 'Enter') generateGpxAndShowMap();
     });
   </script>
 </body>
 </html>
-
